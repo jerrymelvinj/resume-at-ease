@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const SECTIONS = ["intro", "contact", "experience", "education", "skills", "recognition", "preview"];
@@ -20,8 +20,17 @@ const QUIPS = [
   "Skills on paper — power in person.",
 ];
 
-const emptyExp = () => ({ company: "", role: "", duration: "", location: "", bullets: [""] });
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sept", "Oct", "Nov", "Dec"];
+const emptyExp = () => ({ company: "", role: "", duration: "", location: "", startMonth: "", startYear: "", endMonth: "", endYear: "", current: false, bullets: [""] });
 const emptyEdu = () => ({ institution: "", degree: "", year: "", specialization: "" });
+
+const formatDuration = (exp) => {
+  if (exp.startMonth && exp.startYear) {
+    const end = exp.current ? "Present" : exp.endMonth && exp.endYear ? `${exp.endMonth} ${exp.endYear}` : "";
+    return end ? `${exp.startMonth} ${exp.startYear} – ${end}` : `${exp.startMonth} ${exp.startYear}`;
+  }
+  return exp.duration || "";
+};
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 function XPBar({ xp, maxXp }) {
@@ -59,6 +68,14 @@ function Label({ children, required }) {
     <label style={{ display: "block", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#333", marginBottom: 4, fontFamily: "monospace" }}>
       {children}{required && <span style={{ color: "#c00", marginLeft: 2 }}>*</span>}
     </label>
+  );
+}
+
+function ErrorText({ children }) {
+  return (
+    <div style={{ color: "#c00", background: "#fff1f1", border: "1px solid #f2c2c2", borderRadius: 8, padding: "12px 14px", fontFamily: "monospace", fontSize: 12, marginTop: 16 }}>
+      {children}
+    </div>
   );
 }
 
@@ -150,13 +167,14 @@ function generatePDF(data) {
     sectionTitle("Experience");
     data.experience.forEach(exp => {
       if (!exp.company && !exp.role) return;
+      const durationText = formatDuration(exp);
       // Row 1: Company | Duration
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10);
       doc.text(exp.company || "", ML, y);
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9.5);
-      if (exp.duration) doc.text(exp.duration, W - MR, y, { align: "right" });
+      if (durationText) doc.text(durationText, W - MR, y, { align: "right" });
 
       y += 13;
       // Row 2: Role | Location
@@ -258,7 +276,7 @@ function IntroStep({ onStart }) {
   );
 }
 
-function ContactStep({ data, onChange }) {
+function ContactStep({ data, onChange, errors }) {
   const fields = [
     { key: "name", label: "Full Name", placeholder: "Your Name", required: true },
     { key: "email", label: "Email", placeholder: "example@email.com", required: true },
@@ -276,17 +294,51 @@ function ContactStep({ data, onChange }) {
           </div>
         ))}
       </div>
+      {errors?.length > 0 && <ErrorText>{errors.join(" ")}</ErrorText>}
     </SectionCard>
   );
 }
 
-function ExperienceStep({ data, onChange }) {
+function ExperienceStep({ data, onChange, errors }) {
+  const [picker, setPicker] = useState({ idx: null, target: "start", year: new Date().getFullYear(), startMonth: "", startYear: "", endMonth: "", endYear: "", current: false });
+
   const add = () => onChange([...data, emptyExp()]);
   const remove = i => onChange(data.filter((_, idx) => idx !== i));
   const update = (i, key, val) => onChange(data.map((e, idx) => idx === i ? { ...e, [key]: val } : e));
   const addBullet = i => update(i, "bullets", [...data[i].bullets, ""]);
   const removeBullet = (i, bi) => update(i, "bullets", data[i].bullets.filter((_, idx) => idx !== bi));
   const updateBullet = (i, bi, val) => update(i, "bullets", data[i].bullets.map((b, idx) => idx === bi ? val : b));
+
+  const openPicker = (i) => {
+    const exp = data[i] || emptyExp();
+    setPicker({
+      idx: i,
+      target: "start",
+      year: exp.startYear ? Number(exp.startYear) : new Date().getFullYear(),
+      startMonth: exp.startMonth || "",
+      startYear: exp.startYear || "",
+      endMonth: exp.endMonth || "",
+      endYear: exp.endYear || "",
+      current: Boolean(exp.current),
+    });
+  };
+
+  const closePicker = () => setPicker(prev => ({ ...prev, idx: null }));
+
+  const savePicker = () => {
+    if (!picker.startMonth || !picker.startYear) { return; }
+    onChange(data.map((exp, idx) => idx === picker.idx ? {
+      ...exp,
+      startMonth: picker.startMonth,
+      startYear: picker.startYear,
+      endMonth: picker.current ? "" : picker.endMonth,
+      endYear: picker.current ? "" : picker.endYear,
+      current: picker.current,
+    } : exp));
+    closePicker();
+  };
+
+  const setPickerValue = (field, value) => setPicker(prev => ({ ...prev, [field]: value }));
 
   return (
     <div>
@@ -296,7 +348,6 @@ function ExperienceStep({ data, onChange }) {
             {[
               { key: "company", label: "Company Name", required: true },
               { key: "role", label: "Role / Title", required: true },
-              { key: "duration", label: "Duration", placeholder: "Jul 2024 – Present" },
               { key: "location", label: "Location", placeholder: "Bangalore, KA" },
             ].map(f => (
               <div key={f.key}>
@@ -304,6 +355,25 @@ function ExperienceStep({ data, onChange }) {
                 <Input value={exp[f.key]} onChange={v => update(i, f.key, v)} placeholder={f.placeholder || ""} />
               </div>
             ))}
+            <div>
+              <Label>Duration</Label>
+              <button
+                type="button"
+                onClick={() => openPicker(i)}
+                style={{
+                  width: "100%", textAlign: "left", padding: "9px 12px",
+                  border: "1.5px solid #ddd", borderRadius: 6, background: "#fff",
+                  fontFamily: "Georgia, serif", color: "#111", cursor: "pointer",
+                }}
+              >
+                {formatDuration(exp) || "Select duration"}
+              </button>
+              {exp.current && (
+                <div style={{ marginTop: 8, fontSize: 12, color: "#444", fontFamily: "monospace" }}>
+                  Currently working here
+                </div>
+              )}
+            </div>
           </div>
           <div style={{ marginTop: 14 }}>
             <Label>Key Achievements / Responsibilities</Label>
@@ -328,11 +398,102 @@ function ExperienceStep({ data, onChange }) {
         </SectionCard>
       ))}
       <Btn variant="secondary" onClick={add}>+ Add Another Role</Btn>
+      {errors?.length > 0 && <ErrorText>{errors.join(" ")}</ErrorText>}
+
+      {picker.idx !== null && (
+        <div onClick={closePicker} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 360, maxWidth: "100%", background: "#fff", borderRadius: 18, boxShadow: "0 24px 80px rgba(0,0,0,0.16)", padding: 22, position: "relative" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+              <div>
+                <div style={{ fontWeight: 700, fontFamily: "monospace", fontSize: 14 }}>Select Duration</div>
+                <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>Choose start and end dates.</div>
+              </div>
+              <button onClick={closePicker} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 18, color: "#666" }}>✕</button>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+              {[
+                { key: "start", label: "Start Date" },
+                { key: "end", label: "End Date" },
+              ].map(tab => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setPickerValue("target", tab.key)}
+                  style={{
+                    flex: 1, padding: "10px 12px", borderRadius: 10,
+                    border: `1px solid ${picker.target === tab.key ? "#111" : "#ddd"}`,
+                    background: picker.target === tab.key ? "#111" : "#fff",
+                    color: picker.target === tab.key ? "#fff" : "#111",
+                    fontFamily: "monospace", cursor: "pointer",
+                  }}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <button type="button" onClick={() => setPickerValue("year", picker.year - 1)} style={{ border: "1px solid #ddd", background: "transparent", borderRadius: 8, width: 34, height: 34, cursor: "pointer" }}>←</button>
+              <div style={{ fontFamily: "monospace", fontSize: 15, fontWeight: 700 }}>{picker.year}</div>
+              <button type="button" onClick={() => setPickerValue("year", picker.year + 1)} style={{ border: "1px solid #ddd", background: "transparent", borderRadius: 8, width: 34, height: 34, cursor: "pointer" }}>→</button>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10, marginBottom: 16 }}>
+              {MONTHS.map(month => {
+                const active = picker.target === "start" ? picker.startMonth === month : picker.endMonth === month;
+                return (
+                  <button
+                    key={month}
+                    type="button"
+                    onClick={() => setPickerValue(picker.target === "start" ? "startMonth" : "endMonth", month)}
+                    style={{
+                      padding: "10px 0", borderRadius: 10, border: `1px solid ${active ? "#111" : "#ddd"}`,
+                      background: active ? "#111" : "#f9f9f9", color: active ? "#fff" : "#111",
+                      fontFamily: "monospace", cursor: "pointer",
+                    }}
+                  >
+                    {month}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ display: "flex", gap: 12, marginBottom: 18 }}>
+              <div style={{ flex: 1 }}>
+                <Label>Month</Label>
+                <div style={{ padding: "10px 12px", border: "1.5px solid #ddd", borderRadius: 8, background: "#fff", fontFamily: "Georgia, serif", color: "#111" }}>
+                  {picker.target === "start" ? picker.startMonth || "Select month" : picker.endMonth || "Select month"}
+                </div>
+              </div>
+              <div style={{ flex: 1 }}>
+                <Label>Year</Label>
+                <input
+                  type="number"
+                  value={picker.target === "start" ? picker.startYear : picker.endYear}
+                  onChange={e => setPickerValue(picker.target === "start" ? "startYear" : "endYear", e.target.value)}
+                  style={{ width: "100%", padding: "10px 12px", border: "1.5px solid #ddd", borderRadius: 8, fontSize: 14, fontFamily: "Georgia, serif" }}
+                />
+              </div>
+            </div>
+
+            <label style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18, cursor: "pointer", fontFamily: "monospace", color: "#333" }}>
+              <input type="checkbox" checked={picker.current} onChange={e => setPickerValue("current", e.target.checked)} />
+              Currently work here
+            </label>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <Btn variant="ghost" onClick={closePicker}>Cancel</Btn>
+              <Btn onClick={savePicker}>Save</Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function EducationStep({ data, onChange }) {
+function EducationStep({ data, onChange, errors }) {
   const add = () => onChange([...data, emptyEdu()]);
   const remove = i => onChange(data.filter((_, idx) => idx !== i));
   const update = (i, key, val) => onChange(data.map((e, idx) => idx === i ? { ...e, [key]: val } : e));
@@ -362,6 +523,7 @@ function EducationStep({ data, onChange }) {
         </SectionCard>
       ))}
       <Btn variant="secondary" onClick={add}>+ Add Another Degree</Btn>
+      {errors?.length > 0 && <ErrorText>{errors.join(" ")}</ErrorText>}
     </div>
   );
 }
@@ -460,7 +622,7 @@ function PreviewStep({ formData, onExport }) {
               <div key={i} style={{ marginBottom: 10 }}>
                 <div style={{ display: "flex", justifyContent: "space-between" }}>
                   <span style={{ ...mono, fontSize: 10, fontWeight: 700 }}>{exp.company}</span>
-                  <span style={{ ...mono, fontSize: 10, color: "#555" }}>{exp.duration}</span>
+                  <span style={{ ...mono, fontSize: 10, color: "#555" }}>{formatDuration(exp)}</span>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between" }}>
                   <span style={{ ...serif, fontSize: 10, fontStyle: "italic" }}>{exp.role}</span>
@@ -595,6 +757,33 @@ export default function App() {
     generatePDF({ ...contact, experience, education, skills, recognition });
   };
 
+  const isContactComplete = contact.name.trim() && contact.email.trim();
+  const isExperienceComplete = experience.some(exp => exp.company.trim() && exp.role.trim());
+  const isEducationComplete = education.some(edu => edu.institution.trim() && edu.degree.trim());
+
+  const contactWarnings = [];
+  if (!contact.name.trim()) contactWarnings.push("Full Name is required.");
+  if (!contact.email.trim()) contactWarnings.push("Email is required.");
+
+  const experienceWarnings = [];
+  if (!isExperienceComplete) experienceWarnings.push("Provide at least one experience entry with company and role.");
+
+  const educationWarnings = [];
+  if (!isEducationComplete) educationWarnings.push("Provide at least one education entry with institution and degree.");
+
+  const canAdvance = () => {
+    switch (currentSection) {
+      case "contact":
+        return Boolean(isContactComplete);
+      case "experience":
+        return Boolean(isExperienceComplete);
+      case "education":
+        return Boolean(isEducationComplete);
+      default:
+        return true;
+    }
+  };
+
   const badgeList = ["contact", "experience", "education", "skills", "recognition"];
 
   return (
@@ -635,14 +824,14 @@ export default function App() {
 
         {currentSection === "contact" && (
           <>
-            <ContactStep data={contact} onChange={(k, v) => setContact(c => ({ ...c, [k]: v }))} />
+            <ContactStep data={contact} errors={contactWarnings} onChange={(k, v) => setContact(c => ({ ...c, [k]: v }))} />
           </>
         )}
         {currentSection === "experience" && (
-          <ExperienceStep data={experience} onChange={setExperience} />
+          <ExperienceStep data={experience} errors={experienceWarnings} onChange={setExperience} />
         )}
         {currentSection === "education" && (
-          <EducationStep data={education} onChange={setEducation} />
+          <EducationStep data={education} errors={educationWarnings} onChange={setEducation} />
         )}
         {currentSection === "skills" && (
           <SkillsStep data={skills} onChange={setSkills} />
@@ -662,7 +851,7 @@ export default function App() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 24 }}>
             <Btn variant="ghost" onClick={goPrev}>← Back</Btn>
             {currentSection !== "preview" && (
-              <Btn onClick={goNext}>
+              <Btn onClick={goNext} disabled={!canAdvance()}>
                 {currentSection === "recognition" ? "Preview Resume →" : "Next →"}
               </Btn>
             )}
